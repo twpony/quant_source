@@ -1,0 +1,60 @@
+{
+  "updated_at": "2026-06-08 01:53:39.249756",
+  "tables": {
+    "daily": {
+      "rows": 13351617,
+      "files": 3641,
+      "partition": "by_date",
+      "date_range": {
+        "first": "20110609",
+        "last": "20260605"
+      }
+    },
+    "stock_basic": {
+      "rows": 5526,
+      "files": 1,
+      "partition": "single"
+    },
+    "income": {
+      "rows": 266591,
+      "files": 61,
+      "partition": "by_date",
+      "date_range": {
+        "first": "20110331",
+        "last": "20260331"
+      }
+    },
+    "cashflow": {
+      "rows": 288564,
+      "files": 61,
+      "partition": "by_date",
+      "date_range": {
+        "first": "20110331",
+        "last": "20260331"
+      }
+    },
+    "balancesheet": {
+      "rows": 330975,
+      "files": 61,
+      "partition": "by_date",
+      "date_range": {
+        "first": "20110331",
+        "last": "20260331"
+      }
+    },
+    "trade_calendar": {
+      "rows": 5479,
+      "files": 16,
+      "partition": "by_year",
+      "date_range": {
+        "first": "2011",
+        "last": "2026"
+      }
+    },
+    "st_stocks": {
+      "rows": 241,
+      "files": 1,
+      "partition": "single"
+    }
+  }
+}

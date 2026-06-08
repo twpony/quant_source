@@ -1,0 +1,44 @@
+初始化功能
+python main.py init --data-type stock_basic
+python main.py init --data-type trade_calendar
+python main.py init --data-type income
+python main.py init --data-type balancesheet
+python main.py init --data-type cashflow
+python main.py init --data-type daily
+python main.py init --data-type st_stocks
+
+
+更新功能
+# 默认：全量更新
+python main.py update --data-type stock_basic 
+# 默认：全量更新
+python main.py update --data-type st_stocks
+# 默认：增量更新 trade_calendar，最近 3 个月
+python main.py update --data-type trade_calendar
+# 指定月份：更新最近 6 个月的 trade_calendar
+python main.py update --data-type trade_calendar --months 6 
+# 默认：更新当前季度和上一季度的income表
+python main.py update --data-type income
+# 默认：更新当前季度和上一季度的balancesheet表
+python main.py update --data-type balancesheet
+# 默认：更新当前季度和上一季度的cashflow表
+python main.py update --data-type cashflow
+# 默认：更新当前交易日和前3个交易日的daily表
+python main.py update --data-type daily
+
+
+查询功能
+# 查询stock_basic表，全量导出到stock_basic.csv
+python main.py export --table stock_basic --format csv --output stock_basic.csv
+# 查询st_stocks表，全量导出到st_stocks.csv
+python main.py export --table st_stocks --format csv --output st_stocks.csv
+# 查询trade_calendar表，全量导出到trade_calendar.csv
+python main.py export --table trade_calendar --format csv --output trade_calendar.csv
+# 查询利润表，必须设置period参数，导出某个季度的利润表
+python main.py export --table income --period 20260331 --format csv --output income_20260331.csv
+# 查询资产负债表，必须设置period参数，导出某个季度的资产负债表
+python main.py export --table balancesheet --period 20260331 --format csv --output balancesheet_20260331.csv
+# 查询现金流量表，必须设置period参数，导出某个季度的现金流量表
+python main.py export --table cashflow --period 20260331 --format csv --output cashflow_20260331.csv
+# 查询历史日线表，必须设置period参数，导出某个交易日的交易表
+python main.py export --table daily --period 20260605 --format csv --output daily_20260605.csv
