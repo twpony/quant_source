@@ -117,22 +117,107 @@ python main.py fetch daily --ts-code 000001.SZ -o /tmp/daily.csv
 python main.py fetch daily --ts-code 000001.SZ -o /tmp/daily.parquet
 ```
 
-### update — 增量 / 全量数据更新
+### init — 全量历史数据初始化
+
+将数据从 Tushare 拉取并存入本地 DuckDB + Parquet 存储。默认拉取全部数据类型，覆盖约 15 年历史数据。
 
 ```bash
+# 初始化全部数据（耗时约 30-60 分钟，视网络和 Tushare 额度而定）
+python main.py init
+
+# 只初始化特定类型
+python main.py init --data-type daily
+python main.py init --data-type stock_basic
+python main.py init --data-type income
+python main.py init --data-type balancesheet
+python main.py init --data-type cashflow
+python main.py init --data-type trade_calendar
+python main.py init --data-type st_stocks
+python main.py init --data-type adjfactor
+python main.py init --data-type moneyflow
+python main.py init --data-type index_basic
+python main.py init --data-type index_weight
+python main.py init --data-type index_daily
+
+# 指定单只股票（仅适用于财务报表类型）
+python main.py init --data-type income --ts-code 000001.SZ
+```
+
+| 参数            | 说明 |
+| --------------- | ---- |
+| `--data-type`   | 数据类型，默认 `all`（全部）。可选值见上方列表 |
+| `--ts-code`     | 限定单只股票代码（仅 income / balancesheet / cashflow 支持） |
+
+各类型的拉取策略：
+
+| 类型            | 策略 |
+| --------------- | ---- |
+| `daily`         | 通过交易日历逐月批量拉取，跳过已存储 |
+| `stock_basic`   | 一次性全量拉取 |
+| `income`        | 通过 income_vip 按季度逐季度拉取 |
+| `balancesheet`  | 通过 balancesheet_vip 按季度拉取 |
+| `cashflow`      | 通过 cashflow_vip 按季度拉取 |
+| `trade_calendar`| 一次性全量拉取 |
+| `adjfactor`     | 按交易日逐日拉取（因 API 单次上限 6000 行） |
+| `moneyflow`     | 按交易日逐日拉取 |
+| `index_basic`   | 分别拉取 CSI / SSE / SZSE 三个市场 |
+| `index_weight`  | 按月度逐个指数拉取，覆盖 hs300 / zz500 / zz1000 / zz2000 |
+| `index_daily`   | 按指数逐个拉取全量日线 |
+
+> **注意**：`init` 会跳过本地已存在的日期 / 季度数据。如需重新拉取，先删除对应 Parquet 文件再执行。
+
+### update — 增量 / 全量数据更新
+
+`update` 是日常使用的核心命令，用于保持本地数据与 Tushare 同步。支持两种模式：
+
+**增量模式（默认）**：仅拉取最近一段时间的数据，跳过已存储的日期，快速增量追加。
+
+**全量模式（`--full`）**：等同于 `init`，重新拉取全部历史数据并覆盖。
+
+```bash
+# ===== 增量更新 =====
+
 # 增量更新全部数据类型（各类型按默认回溯范围）
 python main.py update
 
-# 全量刷新全部数据
-python main.py update --full
-
 # 更新特定类型
-python main.py update --data-type daily          # 默认最近 5 个交易日
+python main.py update --data-type daily          # 最近 5 个交易日
 python main.py update --data-type daily -d 10    # 最近 10 个交易日
-python main.py update --data-type income         # 默认 1 个月
+python main.py update --data-type income         # 最近 1 个月
 python main.py update --data-type income -m 3    # 最近 3 个月
 python main.py update --data-type index_weight -m 2
+
+# ===== 全量刷新 =====
+python main.py update --full                         # 刷新全部
+python main.py update --full --data-type daily       # 只刷新日线
 ```
+
+| 参数            | 说明 |
+| --------------- | ---- |
+| `--full`        | 全量刷新模式（默认关闭，即增量模式） |
+| `--data-type`   | 数据类型，默认 `all` |
+| `--months` / `-m` | 增量回溯月数（默认 1）：控制 income / trade_calendar / index_weight 等类型的回溯窗口 |
+| `--days` / `-d`   | 增量回溯交易日数（默认 5）：仅对 `daily` 类型生效 |
+
+各类型的增量更新策略：
+
+| 类型            | 增量策略 |
+| --------------- | -------- |
+| `daily`         | 按 `--days` 指定的交易日回溯；逐日拉取，跳过本地已有日期 |
+| `income`        | 拉取当前季度 + 上一季度（默认 1 个月扩展为覆盖最近两个季度） |
+| `balancesheet`  | 同上，通过 balancesheet_vip |
+| `cashflow`      | 同上，通过 cashflow_vip |
+| `trade_calendar`| 按 `--months` 回溯，拉取新交易日 |
+| `adjfactor`     | 按 `--months` 回溯，逐日拉取缺失日期 |
+| `moneyflow`     | 按 `--months` 回溯，逐日拉取缺失日期 |
+| `stock_basic`   | 始终全量刷新（轻量） |
+| `st_stocks`     | 始终全量刷新（轻量） |
+| `index_basic`   | 始终全量刷新（轻量） |
+| `index_weight`  | 按 `--months` 回溯窗口，拉取新月份数据；已有日期自动跳过 |
+| `index_daily`   | 按 `--months` 回溯窗口，逐日拉取缺失日期 |
+
+> **典型工作流**：首次使用执行 `python main.py init` 初始化全量数据，之后每天执行 `python main.py update` 增量同步最新数据。也可以通过 crontab 定时执行 `update`。
+
 
 ### query — 交互式查询
 
