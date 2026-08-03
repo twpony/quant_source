@@ -1,49 +1,49 @@
 {
-  "updated_at": "2026-06-08 01:53:39.249756",
+  "updated_at": "2026-08-03 01:36:59.125794",
   "tables": {
     "daily": {
-      "rows": 13351617,
-      "files": 3641,
+      "rows": 13566806,
+      "files": 3680,
       "partition": "by_date",
       "date_range": {
         "first": "20110609",
-        "last": "20260605"
+        "last": "20260731"
       }
     },
     "stock_basic": {
-      "rows": 5526,
+      "rows": 5548,
       "files": 1,
       "partition": "single"
     },
     "income": {
-      "rows": 266591,
-      "files": 61,
+      "rows": 266717,
+      "files": 62,
       "partition": "by_date",
       "date_range": {
         "first": "20110331",
-        "last": "20260331"
+        "last": "20260630"
       }
     },
     "cashflow": {
-      "rows": 288564,
-      "files": 61,
+      "rows": 288668,
+      "files": 62,
       "partition": "by_date",
       "date_range": {
         "first": "20110331",
-        "last": "20260331"
+        "last": "20260630"
       }
     },
     "balancesheet": {
-      "rows": 330975,
-      "files": 61,
+      "rows": 331099,
+      "files": 62,
       "partition": "by_date",
       "date_range": {
         "first": "20110331",
-        "last": "20260331"
+        "last": "20260630"
       }
     },
     "trade_calendar": {
-      "rows": 5479,
+      "rows": 5535,
       "files": 16,
       "partition": "by_year",
       "date_range": {
@@ -52,9 +52,54 @@
       }
     },
     "st_stocks": {
-      "rows": 241,
+      "rows": 250,
       "files": 1,
       "partition": "single"
+    },
+    "adjfactor": {
+      "rows": 14196840,
+      "files": 3681,
+      "partition": "by_date",
+      "date_range": {
+        "first": "20110609",
+        "last": "20260803"
+      }
+    },
+    "moneyflow": {
+      "rows": 13219814,
+      "files": 3680,
+      "partition": "by_date",
+      "date_range": {
+        "first": "20110609",
+        "last": "20260731"
+      }
+    },
+    "index_basic": {
+      "rows": 8700,
+      "files": 3,
+      "partition": "by_market",
+      "date_range": {
+        "first": "csi",
+        "last": "szse"
+      }
+    },
+    "index_weight": {
+      "rows": 363600,
+      "files": 552,
+      "partition": "by_index",
+      "date_range": {
+        "first": "hs300_20110131",
+        "last": "zz1000_20260731"
+      }
+    },
+    "index_daily": {
+      "rows": 14408,
+      "files": 14408,
+      "partition": "by_index",
+      "date_range": {
+        "first": "hs300_20110104",
+        "last": "zz1000_20260731"
+      }
     }
   }
 }

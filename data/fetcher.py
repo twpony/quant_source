@@ -369,6 +369,203 @@ class TushareDataFetcher:
             ts_code=None, start_date=trade_date, end_date=trade_date
         )
 
+    def fetch_adj_factor(
+        self,
+        ts_code: str | None = None,
+        trade_date: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> pd.DataFrame:
+        """Fetch adjustment factor (复权因子) data.
+
+        Args:
+            ts_code: Stock code e.g. '000001.SZ'. If None, fetches all stocks.
+            trade_date: Single trading date 'YYYYMMDD'.
+                        At least one of *ts_code* or *trade_date* is required
+                        by the Tushare API.
+            start_date: Start date 'YYYYMMDD' (default: 15 years ago).
+            end_date: End date 'YYYYMMDD' (default: today).
+
+        Returns:
+            DataFrame with columns: ts_code, trade_date, adj_factor.
+        """
+        if start_date is None and trade_date is None:
+            start_date = _default_start_date(self._settings.history_years)
+        if end_date is None and trade_date is None:
+            end_date = datetime.today().strftime("%Y%m%d")
+
+        log.info(
+            "Fetching adj_factor | ts_code=%s | trade_date=%s | %s → %s",
+            ts_code or "ALL",
+            trade_date or "-",
+            start_date or "-",
+            end_date or "-",
+        )
+
+        def _call() -> pd.DataFrame:
+            kwargs: dict = {}
+            if ts_code:
+                kwargs["ts_code"] = ts_code
+            if trade_date:
+                kwargs["trade_date"] = trade_date
+            if start_date:
+                kwargs["start_date"] = start_date
+            if end_date:
+                kwargs["end_date"] = end_date
+            return self._pro.adj_factor(**kwargs)
+
+        df = self._retry_call(_call, "adj_factor")
+        return df if df is not None else pd.DataFrame()
+
+    def fetch_index_basic(self, market: str = "") -> pd.DataFrame:
+        """Fetch index basic information (指数基础信息).
+
+        Args:
+            market: Market filter — 'CSI' (中证指数), 'SSE' (上证指数),
+                    'SZSE' (深证指数), or '' for all markets.
+
+        Returns:
+            DataFrame with columns: ts_code, name, fullname, market,
+            publisher, index_type, category, base_date, base_point,
+            list_date, weight_rule, desc, exp_date.
+        """
+        log.info("Fetching index basic info | market=%s", market or "ALL")
+
+        def _call() -> pd.DataFrame:
+            return self._pro.index_basic(market=market)
+
+        df = self._retry_call(_call, "index_basic")
+        return df if df is not None else pd.DataFrame()
+
+    def fetch_index_weight(
+        self,
+        index_code: str,
+        trade_date: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> pd.DataFrame:
+        """Fetch index constituent weight data (指数成分权重).
+
+        Args:
+            index_code: Index code e.g. '000300.SH', '000905.SH'.
+            trade_date: Single trading date 'YYYYMMDD' (month-end).
+            start_date: Start date 'YYYYMMDD'.
+            end_date: End date 'YYYYMMDD'.
+
+        Returns:
+            DataFrame with columns: index_code, con_code, trade_date, weight.
+        """
+        log.info(
+            "Fetching index_weight | index_code=%s | trade_date=%s | %s → %s",
+            index_code,
+            trade_date or "-",
+            start_date or "-",
+            end_date or "-",
+        )
+
+        def _call() -> pd.DataFrame:
+            kwargs: dict = {"index_code": index_code}
+            if trade_date:
+                kwargs["trade_date"] = trade_date
+            if start_date:
+                kwargs["start_date"] = start_date
+            if end_date:
+                kwargs["end_date"] = end_date
+            return self._pro.index_weight(**kwargs)
+
+        df = self._retry_call(_call, "index_weight")
+        return df if df is not None else pd.DataFrame()
+
+    def fetch_index_daily(
+        self,
+        ts_code: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> pd.DataFrame:
+        """Fetch index daily OHLCV data (指数日线行情).
+
+        Args:
+            ts_code: Index code e.g. '000300.SH', '000905.SH'.
+            start_date: Start date 'YYYYMMDD' (default: 13 years ago).
+            end_date: End date 'YYYYMMDD' (default: today).
+
+        Returns:
+            DataFrame with columns: ts_code, trade_date, close, open, high,
+            low, pre_close, change, pct_chg, vol, amount.
+        """
+        if start_date is None:
+            start_date = _default_start_date(self._settings.history_years)
+        if end_date is None:
+            end_date = datetime.today().strftime("%Y%m%d")
+
+        log.info(
+            "Fetching index_daily | ts_code=%s | %s → %s",
+            ts_code, start_date, end_date,
+        )
+
+        def _call() -> pd.DataFrame:
+            return self._pro.index_daily(
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+        df = self._retry_call(_call, "index_daily")
+        return df if df is not None else pd.DataFrame()
+
+    def fetch_moneyflow(
+        self,
+        ts_code: str | None = None,
+        trade_date: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> pd.DataFrame:
+        """Fetch moneyflow (个股资金流向) data.
+
+        Args:
+            ts_code: Stock code e.g. '000001.SZ'. If None, fetches all stocks.
+            trade_date: Single trading date 'YYYYMMDD'.
+                        At least one of *ts_code* or *trade_date* is required
+                        by the Tushare API.
+            start_date: Start date 'YYYYMMDD' (default: 15 years ago).
+            end_date: End date 'YYYYMMDD' (default: today).
+
+        Returns:
+            DataFrame with columns: ts_code, trade_date, buy_sm_vol,
+            buy_sm_amount, sell_sm_vol, sell_sm_amount, buy_md_vol,
+            buy_md_amount, sell_md_vol, sell_md_amount, buy_lg_vol,
+            buy_lg_amount, sell_lg_vol, sell_lg_amount, buy_elg_vol,
+            buy_elg_amount, sell_elg_vol, sell_elg_amount, net_mf_vol,
+            net_mf_amount.
+        """
+        if start_date is None and trade_date is None:
+            start_date = _default_start_date(self._settings.history_years)
+        if end_date is None and trade_date is None:
+            end_date = datetime.today().strftime("%Y%m%d")
+
+        log.info(
+            "Fetching moneyflow | ts_code=%s | trade_date=%s | %s → %s",
+            ts_code or "ALL",
+            trade_date or "-",
+            start_date or "-",
+            end_date or "-",
+        )
+
+        def _call() -> pd.DataFrame:
+            kwargs: dict = {}
+            if ts_code:
+                kwargs["ts_code"] = ts_code
+            if trade_date:
+                kwargs["trade_date"] = trade_date
+            if start_date:
+                kwargs["start_date"] = start_date
+            if end_date:
+                kwargs["end_date"] = end_date
+            return self._pro.moneyflow(**kwargs)
+
+        df = self._retry_call(_call, "moneyflow")
+        return df if df is not None else pd.DataFrame()
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

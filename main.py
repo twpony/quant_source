@@ -7,6 +7,10 @@ Usage examples::
     python main.py fetch daily  --ts-code 000001.SZ
     python main.py fetch daily  --ts-code 000001.SZ --start 20260101 --end 20260605
     python main.py fetch stock-basic  --exchange SSE
+    python main.py fetch index-weight --index-code 000300.SH
+    python main.py fetch index-weight --index-code 000905.SH --start 20240101 --end 20240630
+    python main.py fetch index-daily --index-code 000300.SH
+    python main.py fetch index-daily --index-code 000852.SH --start 20240101 --end 20260630
     python main.py fetch income --ts-code 000001.SZ
     python main.py fetch balancesheet --ts-code 000001.SZ
     python main.py fetch cashflow --ts-code 000001.SZ
@@ -19,6 +23,8 @@ Usage examples::
     # ---- Update (incremental or full) ----
     python main.py update
     python main.py update --full
+    python main.py update --data-type daily         # last 5 trading days by default
+    python main.py update --data-type daily -d 10   # last 10 trading days
     python main.py update --data-type income
 
     # ---- Query ----
@@ -174,13 +180,75 @@ def _add_fetch_parsers(sub: argparse._SubParsersAction) -> None:
                      help="Save to file (.csv or .parquet)")
     fst.set_defaults(func=cmd_fetch_st_stocks)
 
+    # fetch adj-factor
+    fadj = fetch_sub.add_parser("adj-factor", help="Fetch adjustment factor (复权因子) data")
+    fadj.add_argument("--ts-code", type=str, default=None,
+                      help="Stock code e.g. 000001.SZ (omit for all)")
+    fadj.add_argument("--start", type=str, default=None,
+                      help="Start date YYYYMMDD (default: 15 years ago)")
+    fadj.add_argument("--end", type=str, default=None,
+                      help="End date YYYYMMDD (default: today)")
+    fadj.add_argument("--output", "-o", type=str, default=None,
+                      help="Save to file (.csv or .parquet)")
+    fadj.set_defaults(func=cmd_fetch_adj_factor)
+
+    # fetch moneyflow
+    fmf = fetch_sub.add_parser("moneyflow", help="Fetch moneyflow (个股资金流向) data")
+    fmf.add_argument("--ts-code", type=str, default=None,
+                     help="Stock code e.g. 000001.SZ (omit for all)")
+    fmf.add_argument("--trade-date", type=str, default=None,
+                     help="Trading date YYYYMMDD (single date)")
+    fmf.add_argument("--start", type=str, default=None,
+                     help="Start date YYYYMMDD (default: 15 years ago)")
+    fmf.add_argument("--end", type=str, default=None,
+                     help="End date YYYYMMDD (default: today)")
+    fmf.add_argument("--output", "-o", type=str, default=None,
+                     help="Save to file (.csv or .parquet)")
+    fmf.set_defaults(func=cmd_fetch_moneyflow)
+
+    # fetch index-basic
+    fib = fetch_sub.add_parser("index-basic", help="Fetch index basic info (指数基础信息)")
+    fib.add_argument("--market", "-m", type=str, default="",
+                     choices=["", "CSI", "SSE", "SZSE"],
+                     help="Market filter (default: all — fetches CSI/SSE/SZSE separately)")
+    fib.add_argument("--output", "-o", type=str, default=None,
+                     help="Save to file (.csv or .parquet)")
+    fib.set_defaults(func=cmd_fetch_index_basic)
+
+    # fetch index-weight
+    fiw = fetch_sub.add_parser("index-weight", help="Fetch index constituent weight data (指数成分权重)")
+    fiw.add_argument("--index-code", "-i", type=str, required=True,
+                     help="Index code e.g. 000300.SH, 000905.SH, 000852.SH, 932000.CSI")
+    fiw.add_argument("--trade-date", type=str, default=None,
+                     help="Single month-end date YYYYMMDD")
+    fiw.add_argument("--start", type=str, default=None,
+                     help="Start date YYYYMMDD")
+    fiw.add_argument("--end", type=str, default=None,
+                     help="End date YYYYMMDD")
+    fiw.add_argument("--output", "-o", type=str, default=None,
+                     help="Save to file (.csv or .parquet)")
+    fiw.set_defaults(func=cmd_fetch_index_weight)
+
+    # fetch index-daily
+    fid = fetch_sub.add_parser("index-daily", help="Fetch index daily OHLCV data (指数日线行情)")
+    fid.add_argument("--index-code", "-i", type=str, required=True,
+                     help="Index code e.g. 000300.SH, 000905.SH, 000852.SH, 932000.CSI")
+    fid.add_argument("--start", type=str, default=None,
+                     help="Start date YYYYMMDD (default: 13 years ago)")
+    fid.add_argument("--end", type=str, default=None,
+                     help="End date YYYYMMDD (default: today)")
+    fid.add_argument("--output", "-o", type=str, default=None,
+                     help="Save to file (.csv or .parquet)")
+    fid.set_defaults(func=cmd_fetch_index_daily)
+
 
 def _add_init_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("init", help="Full historical data pull → storage")
     p.add_argument(
         "--data-type", type=str, default="all",
         choices=["all", "daily", "stock_basic", "income", "cashflow",
-                 "balancesheet", "trade_calendar", "st_stocks"],
+                 "balancesheet", "trade_calendar", "st_stocks", "adjfactor",
+                 "moneyflow", "index_basic", "index_weight", "index_daily"],
         help="Which data type to initialize (default: all)",
     )
     p.add_argument(
@@ -199,12 +267,17 @@ def _add_update_parser(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--data-type", type=str, default="all",
         choices=["all", "daily", "stock_basic", "income", "cashflow",
-                 "balancesheet", "trade_calendar", "st_stocks"],
+                 "balancesheet", "trade_calendar", "st_stocks", "adjfactor",
+                 "moneyflow", "index_basic", "index_weight", "index_daily"],
         help="Which data type to update (default: all)",
     )
     p.add_argument(
-        "--months", "-m", type=int, default=3,
-        help="Number of months to look back for incremental update (default: 3)",
+        "--months", "-m", type=int, default=1,
+        help="Number of months to look back for incremental update (default: 1; not used for daily when --days is specified)",
+    )
+    p.add_argument(
+        "--days", "-d", type=int, default=5,
+        help="Number of trading days to look back for daily update (default: 5; only used with --data-type daily)",
     )
     p.set_defaults(func=cmd_update)
 
@@ -212,11 +285,29 @@ def _add_update_parser(sub: argparse._SubParsersAction) -> None:
 def _add_query_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "query",
-        help="Query data (interactive REPL or one-shot SQL)",
+        help="Query data (interactive REPL, one-shot SQL, or named sub-commands)",
     )
+    query_sub = p.add_subparsers(dest="query_command", help="Query type")
+    query_sub.required = False
+
+    # query --sql / interactive (default)
     p.add_argument("--sql", "-s", type=str, default=None,
                    help="SQL query to execute (omit for interactive mode)")
     p.set_defaults(func=cmd_query)
+
+    # query index-weight
+    qiw = query_sub.add_parser("index-weight", help="Query index constituent weights")
+    qiw.add_argument("--index-code", "-i", type=str, default=None,
+                     help="Index code e.g. 000300.SH")
+    qiw.add_argument("--date", "-d", type=str, default=None,
+                     help="Month-end date YYYYMMDD (default: latest)")
+    qiw.add_argument("--con-code", "-c", type=str, default=None,
+                     help="Search a constituent stock in all indices")
+    qiw.add_argument("--top", "-n", type=int, default=None,
+                     help="Show top N by weight")
+    qiw.add_argument("--output", "-o", type=str, default=None,
+                     help="Save to file (.csv or .parquet)")
+    qiw.set_defaults(func=cmd_query_index_weight)
 
 
 def _add_export_parser(sub: argparse._SubParsersAction) -> None:
@@ -224,7 +315,8 @@ def _add_export_parser(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--table", "-t", type=str, required=True,
         choices=["daily", "stock_basic", "income", "cashflow",
-                 "balancesheet", "trade_calendar", "st_stocks"],
+                 "balancesheet", "trade_calendar", "st_stocks", "adjfactor",
+                 "moneyflow", "index_basic", "index_weight", "index_daily"],
         help="Data table to export",
     )
     p.add_argument(
@@ -239,7 +331,7 @@ def _add_export_parser(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--ts-code", type=str, default=None,
                    help="Optional stock filter")
     p.add_argument("--period", type=str, default=None,
-                   help="Quarter end date YYYYMMDD (required for income/cashflow/balancesheet tables)")
+                   help="Trading date YYYYMMDD (required for adjfactor) / Quarter end date YYYYMMDD (required for income/cashflow/balancesheet tables)")
     p.add_argument("--start", type=str, default=None,
                    help="Start date YYYYMMDD")
     p.add_argument("--end", type=str, default=None,
@@ -399,6 +491,159 @@ def cmd_fetch_st_stocks(args: argparse.Namespace) -> None:
 
 
 # ======================================================================
+# Command: fetch adj-factor
+# ======================================================================
+
+def cmd_fetch_adj_factor(args: argparse.Namespace) -> None:
+    from data.fetcher import TushareDataFetcher
+
+    fetcher = TushareDataFetcher()
+    df = fetcher.fetch_adj_factor(
+        ts_code=args.ts_code,
+        start_date=args.start,
+        end_date=args.end,
+    )
+    if df.empty:
+        print("No data returned.")
+        sys.exit(1)
+
+    _output_or_show(df, args.output, "adjfactor")
+
+
+# ======================================================================
+# Command: fetch moneyflow
+# ======================================================================
+
+def cmd_fetch_moneyflow(args: argparse.Namespace) -> None:
+    from data.fetcher import TushareDataFetcher
+
+    fetcher = TushareDataFetcher()
+    df = fetcher.fetch_moneyflow(
+        ts_code=args.ts_code,
+        trade_date=args.trade_date,
+        start_date=args.start,
+        end_date=args.end,
+    )
+    if df.empty:
+        print("No data returned.")
+        sys.exit(1)
+
+    _output_or_show(df, args.output, "moneyflow")
+
+
+# ======================================================================
+# Command: fetch index-basic
+# ======================================================================
+
+def cmd_fetch_index_basic(args: argparse.Namespace) -> None:
+    from data.fetcher import TushareDataFetcher
+
+    fetcher = TushareDataFetcher()
+
+    if args.market:
+        df = fetcher.fetch_index_basic(market=args.market)
+        if df.empty:
+            print(f"No index basic data for market={args.market}")
+            sys.exit(1)
+        _output_or_show(df, args.output, f"index_basic/{args.market}")
+    else:
+        # Fetch all three markets
+        dfs: list[pd.DataFrame] = []
+        for market in ("CSI", "SSE", "SZSE"):
+            df = fetcher.fetch_index_basic(market=market)
+            if not df.empty:
+                dfs.append(df)
+                print(f"  {market}: {len(df)} indices")
+            else:
+                print(f"  {market}: (empty)")
+        if not dfs:
+            print("No index basic data returned for any market.")
+            sys.exit(1)
+        combined = pd.concat(dfs, ignore_index=True)
+        _output_or_show(combined, args.output, "index_basic")
+
+
+# ======================================================================
+# Command: fetch index-weight
+# ======================================================================
+
+def cmd_fetch_index_weight(args: argparse.Namespace) -> None:
+    from data.fetcher import TushareDataFetcher
+
+    fetcher = TushareDataFetcher()
+    df = fetcher.fetch_index_weight(
+        index_code=args.index_code,
+        trade_date=args.trade_date,
+        start_date=args.start,
+        end_date=args.end,
+    )
+    if df.empty:
+        print("No data returned.")
+        sys.exit(1)
+
+    _output_or_show(df, args.output, f"index_weight/{args.index_code}")
+
+
+# ======================================================================
+# Command: fetch index-daily
+# ======================================================================
+
+def cmd_fetch_index_daily(args: argparse.Namespace) -> None:
+    from data.fetcher import TushareDataFetcher
+
+    fetcher = TushareDataFetcher()
+    df = fetcher.fetch_index_daily(
+        ts_code=args.index_code,
+        start_date=args.start,
+        end_date=args.end,
+    )
+    if df.empty:
+        print("No data returned.")
+        sys.exit(1)
+
+    _output_or_show(df, args.output, f"index_daily/{args.index_code}")
+
+
+# ======================================================================
+# Command: query index-weight
+# ======================================================================
+
+def cmd_query_index_weight(args: argparse.Namespace) -> None:
+    from query.engine import QueryEngine
+
+    engine = QueryEngine()
+
+    try:
+        if args.con_code:
+            # Search a stock across all indices
+            df = engine.search_constituent(args.con_code)
+            if args.index_code:
+                df = df[df["index_code"] == args.index_code]
+            label = f"index_weight/con={args.con_code}"
+        elif args.index_code:
+            if args.date:
+                df = engine.get_index_weight(args.index_code, args.date)
+            else:
+                df = engine.index_weight_latest(args.index_code)
+            label = f"index_weight/{args.index_code}"
+        else:
+            # Summary of all indices, latest date each
+            df = engine.index_weight_summary()
+            label = "index_weight/summary"
+
+        if args.top and len(df) > args.top:
+            df = df.head(args.top)
+
+        if df.empty:
+            print("No data matched.")
+            return
+
+        _output_or_show(df, args.output, label)
+    finally:
+        engine.close()
+
+
+# ======================================================================
 # Command: init
 # ======================================================================
 
@@ -446,9 +691,29 @@ def cmd_init(args: argparse.Namespace) -> None:
             df = fetcher.fetch_trade_calendar()
             results["trade_calendar"] = storage.save_trade_calendar(df)
 
+        if data_type in ("all", "adjfactor"):
+            log.info("Initialising adjfactor data...")
+            results["adjfactor"] = updater._update_adjfactor_full()
+
+        if data_type in ("all", "moneyflow"):
+            log.info("Initialising moneyflow data...")
+            results["moneyflow"] = updater._update_moneyflow_full()
+
         if data_type in ("all", "st_stocks"):
             df = fetcher.fetch_st_stocks()
             results["st_stocks"] = storage.save_st_stocks(df)
+
+        if data_type in ("all", "index_basic"):
+            log.info("Initialising index basic info (CSI/SSE/SZSE)...")
+            results["index_basic"] = updater._update_index_basic()
+
+        if data_type in ("all", "index_weight"):
+            log.info("Initialising index weight data (past 13 years)...")
+            results["index_weight"] = updater._update_index_weight_full()
+
+        if data_type in ("all", "index_daily"):
+            log.info("Initialising index daily data (past 13 years)...")
+            results["index_daily"] = updater._update_index_daily_full()
 
         _print_summary("INIT complete!", results)
     except ValueError as e:
@@ -470,12 +735,14 @@ def cmd_update(args: argparse.Namespace) -> None:
 
     data_type = args.data_type
     months = args.months
+    days = args.days
 
     log.info(
-        "=== UPDATE (mode=%s, data_type=%s, months=%d) ===",
+        "=== UPDATE (mode=%s, data_type=%s, months=%d, days=%d) ===",
         "full" if args.full else "incremental",
         data_type,
         months,
+        days,
     )
 
     try:
@@ -492,7 +759,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         else:
             # Single data type — always full refresh for lightweight types;
             # trade_calendar / daily / income support incremental via --months
-            results = _update_single(updater, data_type, months, full=args.full)
+            results = _update_single(updater, data_type, months, days=days, full=args.full)
 
         _print_summary("UPDATE complete!", results)
     except ValueError as e:
@@ -503,13 +770,13 @@ def cmd_update(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def _update_single(updater, data_type: str, months: int = 3, full: bool = False) -> dict[str, int]:
+def _update_single(updater, data_type: str, months: int = 3, days: int = 5, full: bool = False) -> dict[str, int]:
     """Update a single data type.
 
     Lightweight types (st_stocks, stock_basic) always do full refresh.
     Heavier types (daily, income, trade_calendar) use incremental with
     configurable *months* for lookback range, or full refresh when *full*
-    is True.
+    is True.  Daily data uses *days* (trading days) instead of *months*.
     """
     results: dict[str, int] = {}
 
@@ -521,7 +788,7 @@ def _update_single(updater, data_type: str, months: int = 3, full: bool = False)
         if full:
             results["daily"] = updater._update_daily_full()
         else:
-            results["daily"] = updater._update_daily_incremental(months=months)
+            results["daily"] = updater._update_daily_incremental(days=days)
     elif data_type == "income":
         if full:
             results["income"] = updater._update_income_full()
@@ -542,6 +809,28 @@ def _update_single(updater, data_type: str, months: int = 3, full: bool = False)
             results["trade_calendar"] = updater._update_trade_calendar_full()
         else:
             results["trade_calendar"] = updater._update_trade_calendar_incremental(months=months)
+    elif data_type == "adjfactor":
+        if full:
+            results["adjfactor"] = updater._update_adjfactor_full()
+        else:
+            results["adjfactor"] = updater._update_adjfactor_incremental(months=months)
+    elif data_type == "moneyflow":
+        if full:
+            results["moneyflow"] = updater._update_moneyflow_full()
+        else:
+            results["moneyflow"] = updater._update_moneyflow_incremental(months=months)
+    elif data_type == "index_basic":
+        results["index_basic"] = updater._update_index_basic()
+    elif data_type == "index_weight":
+        if full:
+            results["index_weight"] = updater._update_index_weight_full()
+        else:
+            results["index_weight"] = updater._update_index_weight_incremental(months=months)
+    elif data_type == "index_daily":
+        if full:
+            results["index_daily"] = updater._update_index_daily_full()
+        else:
+            results["index_daily"] = updater._update_index_daily_incremental(months=months)
 
     return results
 
@@ -551,6 +840,11 @@ def _update_single(updater, data_type: str, months: int = 3, full: bool = False)
 # ======================================================================
 
 def cmd_query(args: argparse.Namespace) -> None:
+    # Dispatch to subcommand if specified
+    if hasattr(args, "query_command") and args.query_command == "index-weight":
+        cmd_query_index_weight(args)
+        return
+
     from query.engine import QueryEngine
 
     engine = QueryEngine()
@@ -620,8 +914,46 @@ def cmd_export(args: argparse.Namespace) -> None:
             df = storage.read_cashflow(args.ts_code, period, period)
         elif table == "trade_calendar":
             df = storage.read_trade_calendar(args.ts_code, args.start, args.end)
+        elif table == "adjfactor":
+            period = args.period
+            if not period:
+                log.error(
+                    "--period is required for adjfactor table "
+                    "(e.g. --period 20260627)."
+                )
+                sys.exit(1)
+            # Use period as both start and end to filter exactly one trading day
+            df = storage.read_adjfactor(args.ts_code, period, period)
+        elif table == "moneyflow":
+            period = args.period
+            if not period:
+                log.error(
+                    "--period is required for moneyflow table "
+                    "(e.g. --period 20260627)."
+                )
+                sys.exit(1)
+            # Use period as both start and end to filter exactly one trading day
+            df = storage.read_moneyflow(args.ts_code, period, period)
         elif table == "st_stocks":
             df = storage.read_st_stocks(args.ts_code)
+        elif table == "index_basic":
+            # --ts-code can be used as market filter (CSI/SSE/SZSE); omit for all
+            market = args.ts_code if args.ts_code in ("CSI", "SSE", "SZSE") else None
+            df = storage.read_index_basic(market=market)
+        elif table == "index_weight":
+            # --ts-code as index_code filter (e.g. 000300.SH); --start/--end for date range
+            df = storage.read_index_weight(
+                index_code=args.ts_code,
+                start_date=args.start,
+                end_date=args.end,
+            )
+        elif table == "index_daily":
+            # --ts-code as index_code filter (e.g. 000300.SH); --start/--end for date range
+            df = storage.read_index_daily(
+                index_code=args.ts_code,
+                start_date=args.start,
+                end_date=args.end,
+            )
         else:
             log.error("Unknown table: %s", table)
             sys.exit(1)
@@ -708,7 +1040,7 @@ def _interactive_loop(engine) -> None:
 
     print("\n" + "=" * 60)
     print("  Quant Data Query — Interactive Mode")
-    print("  Tables: daily_view | stock_basic_view | income_view | cashflow_view | balancesheet_view")
+    print("  Tables: daily_view | stock_basic_view | income_view | cashflow_view | balancesheet_view | adjfactor_view | moneyflow_view | index_basic_view | index_weight_view | index_daily_view")
     print("  Type 'help' for commands, 'exit' to quit.")
     print("=" * 60 + "\n")
 
@@ -731,7 +1063,7 @@ def _interactive_loop(engine) -> None:
             continue
 
         if cmd.lower() == "tables":
-            print("  daily_view | stock_basic_view | income_view | cashflow_view | balancesheet_view\n")
+            print("  daily_view | stock_basic_view | income_view | cashflow_view | balancesheet_view | adjfactor_view | moneyflow_view | index_basic_view | index_weight_view | index_daily_view\n")
             continue
 
         if cmd.lower() == "counts":
@@ -857,6 +1189,22 @@ def _dispatch_shortcut(cmd: str, engine) -> bool:
             n = int(parts[2]) if len(parts) > 2 else 8
             _print_df(engine.cashflow_summary(parts[1], n))
 
+        elif sc == ".mf":
+            if len(parts) < 2:
+                print("  Usage: .mf <ts_code> [n_days]")
+                return True
+            n = int(parts[2]) if len(parts) > 2 else 20
+            _print_df(engine.moneyflow_summary(parts[1], n))
+
+        elif sc == ".mfrank":
+            date = (
+                parts[1]
+                if len(parts) > 1
+                else datetime.today().strftime("%Y%m%d")
+            )
+            n = int(parts[2]) if len(parts) > 2 else 20
+            _print_df(engine.moneyflow_rank(date, n))
+
         elif sc == ".assets":
             date = (
                 parts[1]
@@ -899,6 +1247,73 @@ def _dispatch_shortcut(cmd: str, engine) -> bool:
             is_open = engine.is_trading_day(parts[1])
             print(f"  {parts[1]} is {'a trading day' if is_open else 'NOT a trading day'}\n")
 
+        elif sc == ".indices":
+            market = parts[1] if len(parts) > 1 else None
+            _print_df(engine.get_index_basic(market=market))
+
+        elif sc == ".isearch":
+            if len(parts) < 2:
+                print("  Usage: .isearch <keyword>")
+                return True
+            _print_df(engine.search_index(parts[1]))
+
+        elif sc == ".iw":
+            if len(parts) < 2:
+                print("  Usage: .iw <index_code> [date]")
+                return True
+            date = parts[2] if len(parts) > 2 else None
+            if date:
+                _print_df(engine.get_index_weight(parts[1], date))
+            else:
+                _print_df(engine.index_weight_latest(parts[1]))
+
+        elif sc == ".iwtop":
+            if len(parts) < 2:
+                print("  Usage: .iwtop <index_code> [date] [n]")
+                return True
+            date = parts[2] if len(parts) > 2 else None
+            n = int(parts[3]) if len(parts) > 3 else 20
+            if date:
+                df = engine.get_index_weight(parts[1], date)
+            else:
+                df = engine.index_weight_latest(parts[1])
+            if not df.empty:
+                _print_df(df.head(n))
+
+        elif sc == ".iwcon":
+            if len(parts) < 2:
+                print("  Usage: .iwcon <con_code>")
+                return True
+            _print_df(engine.search_constituent(parts[1]))
+
+        elif sc == ".iwsum":
+            index_code = parts[1] if len(parts) > 1 else None
+            _print_df(engine.index_weight_summary(index_code=index_code))
+
+        elif sc == ".id":
+            if len(parts) < 2:
+                print("  Usage: .id <index_code> [start_date] [end_date]")
+                return True
+            index_code = parts[1]
+            start = parts[2] if len(parts) > 2 else None
+            end = parts[3] if len(parts) > 3 else None
+            _print_df(engine.get_index_daily(index_code, start, end))
+
+        elif sc == ".idlatest":
+            if len(parts) < 2:
+                print("  Usage: .idlatest <index_code>")
+                return True
+            _print_df(engine.get_index_daily_latest(parts[1]))
+
+        elif sc == ".idrank":
+            date = (
+                parts[1]
+                if len(parts) > 1
+                else datetime.today().strftime("%Y%m%d")
+            )
+            n = int(parts[2]) if len(parts) > 2 else 10
+            _print_df(engine.index_performance_rank(date, n))
+
         else:
             print(f"  Unknown command: {sc}")
         return True
@@ -925,12 +1340,23 @@ def _print_help() -> None:
     .fin <ts_code> [n]      Recent N income reporting periods
     .bs <ts_code> [n]       Recent N balance sheet periods
     .cf <ts_code> [n]       Recent N cashflow reporting periods
+    .mf <ts_code> [n]       Recent N days moneyflow for a stock
+    .mfrank <date> [n]      Top-N by net moneyflow amount on a date
     .assets [date] [n]      Top-N by total assets
     .latest <ts_code>       Latest daily bar for a stock
     .stocks [market]        List stocks, optionally by market
     .st [type]              List ST stocks (ST or *ST)
     .tcal <start> <end>     Query trading calendar
     .isopen <date>          Check if date is a trading day
+    .indices [market]       List index basic info (CSI/SSE/SZSE)
+    .isearch <keyword>      Search indices by name/code
+    .iw <index_code> [date] View index constituent weights
+    .iwtop <index> [date] [n]Top-N constituents by weight
+    .iwcon <con_code>       Find index memberships for a stock
+    .iwsum [index]          Index weight summary statistics
+    .id <index> [start] [end] Query index daily OHLCV data
+    .idlatest <index>       Latest index daily bar
+    .idrank [date] [n]      Index performance rank by pct_chg
 
   Meta commands:
     help                    Show this help

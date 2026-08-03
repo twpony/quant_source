@@ -343,6 +343,67 @@ _COLUMN_TYPES: dict[str, dict[str, str]] = {
         "industry": "VARCHAR",
         "list_date": "VARCHAR",
     },
+    "adjfactor": {
+        "ts_code": "VARCHAR",
+        "trade_date": "VARCHAR",
+        "adj_factor": "DOUBLE",
+    },
+    "moneyflow": {
+        "ts_code": "VARCHAR",
+        "trade_date": "VARCHAR",
+        "buy_sm_vol": "DOUBLE",
+        "buy_sm_amount": "DOUBLE",
+        "sell_sm_vol": "DOUBLE",
+        "sell_sm_amount": "DOUBLE",
+        "buy_md_vol": "DOUBLE",
+        "buy_md_amount": "DOUBLE",
+        "sell_md_vol": "DOUBLE",
+        "sell_md_amount": "DOUBLE",
+        "buy_lg_vol": "DOUBLE",
+        "buy_lg_amount": "DOUBLE",
+        "sell_lg_vol": "DOUBLE",
+        "sell_lg_amount": "DOUBLE",
+        "buy_elg_vol": "DOUBLE",
+        "buy_elg_amount": "DOUBLE",
+        "sell_elg_vol": "DOUBLE",
+        "sell_elg_amount": "DOUBLE",
+        "net_mf_vol": "DOUBLE",
+        "net_mf_amount": "DOUBLE",
+    },
+    "index_basic": {
+        "ts_code": "VARCHAR",
+        "name": "VARCHAR",
+        "fullname": "VARCHAR",
+        "market": "VARCHAR",
+        "publisher": "VARCHAR",
+        "index_type": "VARCHAR",
+        "category": "VARCHAR",
+        "base_date": "VARCHAR",
+        "base_point": "DOUBLE",
+        "list_date": "VARCHAR",
+        "weight_rule": "VARCHAR",
+        "desc": "VARCHAR",
+        "exp_date": "VARCHAR",
+    },
+    "index_weight": {
+        "index_code": "VARCHAR",
+        "con_code": "VARCHAR",
+        "trade_date": "VARCHAR",
+        "weight": "DOUBLE",
+    },
+    "index_daily": {
+        "ts_code": "VARCHAR",
+        "trade_date": "VARCHAR",
+        "close": "DOUBLE",
+        "open": "DOUBLE",
+        "high": "DOUBLE",
+        "low": "DOUBLE",
+        "pre_close": "DOUBLE",
+        "change": "DOUBLE",
+        "pct_chg": "DOUBLE",
+        "vol": "DOUBLE",
+        "amount": "DOUBLE",
+    },
 }
 
 # Primary-key columns per data type (used for dedup / upsert).
@@ -354,18 +415,47 @@ _PRIMARY_KEYS: dict[str, list[str]] = {
     "balancesheet": ["ts_code", "end_date"],
     "trade_calendar": ["exchange", "cal_date"],
     "st_stocks": ["ts_code"],
+    "adjfactor": ["ts_code", "trade_date"],
+    "moneyflow": ["ts_code", "trade_date"],
+    "index_basic": ["ts_code"],
+    "index_weight": ["index_code", "con_code", "trade_date"],
+    "index_daily": ["ts_code", "trade_date"],
 }
 
 # Which tables are stored as a single Parquet file (not partitioned).
 _SINGLE_FILE_TABLES = {"stock_basic", "st_stocks"}
 
 # Which tables are partitioned by full date (YYYYMMDD).
-_BY_DATE_TABLES = {"daily", "income", "cashflow", "balancesheet"}
+_BY_DATE_TABLES = {"daily", "income", "cashflow", "balancesheet", "adjfactor", "moneyflow"}
 
 # All known data types, in display order.
+# Which tables are stored in the index_basic/ sub-directory (multi-file by market).
+_INDEX_BASIC_MARKETS = {
+    "CSI": "csi",
+    "SSE": "sse",
+    "SZSE": "szse",
+}
+
+# Index weight — maps tushare index_code → short directory name
+_INDEX_WEIGHT_INDICES: dict[str, str] = {
+    "000852.SH": "zz1000",
+    "932000.CSI": "zz2000",
+    "000905.SH": "zz500",
+    "000300.SH": "hs300",
+}
+
+# Index daily — same index set as index_weight, stored under index_daily/
+_INDEX_DAILY_INDICES: dict[str, str] = {
+    "000852.SH": "zz1000",
+    "932000.CSI": "zz2000",
+    "000905.SH": "zz500",
+    "000300.SH": "hs300",
+}
+
 _ALL_TABLES = (
     "daily", "stock_basic", "income", "cashflow", "balancesheet",
-    "trade_calendar", "st_stocks",
+    "trade_calendar", "st_stocks", "adjfactor", "moneyflow", "index_basic",
+    "index_weight", "index_daily",
 )
 
 
@@ -467,6 +557,169 @@ class DataStorage:
         """
         return self._save_single(df, "st_stocks", _PRIMARY_KEYS["st_stocks"])
 
+    def save_adjfactor(self, df: pd.DataFrame) -> int:
+        """Save adjustment factor data — partitioned by trade date.
+
+        Example: ``data_files/adjfactor/20260627.parquet``
+        """
+        return self._save_partitioned(
+            df, "adjfactor", _PRIMARY_KEYS["adjfactor"],
+            "trade_date", by_date=True,
+        )
+
+    def save_moneyflow(self, df: pd.DataFrame) -> int:
+        """Save moneyflow data — partitioned by trade date.
+
+        Example: ``data_files/moneyflow/20260627.parquet``
+        """
+        return self._save_partitioned(
+            df, "moneyflow", _PRIMARY_KEYS["moneyflow"],
+            "trade_date", by_date=True,
+        )
+
+    def save_index_basic(self, df: pd.DataFrame, market: str) -> int:
+        """Save index basic info for a single market.
+
+        Each market is stored as a separate Parquet file in the
+        ``data_files/index_basic/`` directory.
+
+        Args:
+            df: DataFrame from ``fetch_index_basic(market)``.
+            market: One of 'CSI', 'SSE', 'SZSE'.
+
+        Returns:
+            Number of rows saved.
+        """
+        if df.empty:
+            log.warning("index_basic/%s: empty DataFrame, nothing to save.", market)
+            return 0
+
+        # Cast columns to correct types to prevent DuckDB type inference
+        # issues (e.g. all-NULL VARCHAR columns being inferred as INTEGER).
+        col_types = _COLUMN_TYPES.get("index_basic", {})
+        for col, dtype in col_types.items():
+            if col in df.columns:
+                if dtype == "VARCHAR":
+                    df[col] = df[col].astype(str).replace("nan", "").replace("<NA>", "").replace("None", "")
+                    df[col] = df[col].replace("", None)
+                elif dtype == "DOUBLE":
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+                elif dtype == "INTEGER":
+                    df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+
+        market_lower = _INDEX_BASIC_MARKETS.get(market, market.lower())
+        path = self._parquet_path("index_basic", market_lower)
+        self._upsert_parquet(df, path, _PRIMARY_KEYS["index_basic"])
+
+        self._ensure_views("index_basic")
+        self.write_manifest()
+        log.info("index_basic/%s: saved %d rows.", market, len(df))
+        return len(df)
+
+    def save_index_weight(self, df: pd.DataFrame, index_code: str) -> int:
+        """Save index constituent weight data for a single index.
+
+        Data is stored in ``data_files/index_weight/{short_name}/`` with
+        files named ``{short_name}_{trade_date}.parquet``.
+
+        Args:
+            df: DataFrame from ``fetch_index_weight(index_code)``.
+            index_code: Tushare index code e.g. '000300.SH', '000905.SH'.
+
+        Returns:
+            Number of rows saved.
+        """
+        short_name = _INDEX_WEIGHT_INDICES.get(index_code)
+        if short_name is None:
+            log.error("Unknown index_code for index_weight: %s", index_code)
+            return 0
+
+        if df.empty:
+            log.warning("index_weight/%s: empty DataFrame, nothing to save.", short_name)
+            return 0
+
+        # Cast columns to correct types
+        col_types = _COLUMN_TYPES.get("index_weight", {})
+        for col, dtype in col_types.items():
+            if col in df.columns:
+                if dtype == "VARCHAR":
+                    df[col] = df[col].astype(str).replace("nan", "").replace("<NA>", "").replace("None", "")
+                    df[col] = df[col].replace("", None)
+                elif dtype == "DOUBLE":
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        df = df.copy()
+        pkeys = _PRIMARY_KEYS["index_weight"]
+        total = 0
+
+        # Partition by trade_date within the index subdirectory
+        for trade_date, group in df.groupby("trade_date"):
+            filename = f"{short_name}_{trade_date}.parquet"
+            path = self._parquet_dir("index_weight") / short_name / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._upsert_parquet(group, path, pkeys)
+            total += len(group)
+
+        self._ensure_views("index_weight")
+        self.write_manifest()
+        log.info(
+            "index_weight/%s: saved %d rows across %d date(s).",
+            short_name, total, df["trade_date"].nunique(),
+        )
+        return total
+
+    def save_index_daily(self, df: pd.DataFrame, index_code: str) -> int:
+        """Save index daily OHLCV data for a single index.
+
+        Data is stored in ``data_files/index_daily/{short_name}/`` with
+        files named ``{short_name}_{trade_date}.parquet``.
+
+        Args:
+            df: DataFrame from ``fetch_index_daily(index_code)``.
+            index_code: Tushare index code e.g. '000300.SH', '000905.SH'.
+
+        Returns:
+            Number of rows saved.
+        """
+        short_name = _INDEX_DAILY_INDICES.get(index_code)
+        if short_name is None:
+            log.error("Unknown index_code for index_daily: %s", index_code)
+            return 0
+
+        if df.empty:
+            log.warning("index_daily/%s: empty DataFrame, nothing to save.", short_name)
+            return 0
+
+        # Cast columns to correct types
+        col_types = _COLUMN_TYPES.get("index_daily", {})
+        for col, dtype in col_types.items():
+            if col in df.columns:
+                if dtype == "VARCHAR":
+                    df[col] = df[col].astype(str).replace("nan", "").replace("<NA>", "").replace("None", "")
+                    df[col] = df[col].replace("", None)
+                elif dtype == "DOUBLE":
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        df = df.copy()
+        pkeys = _PRIMARY_KEYS["index_daily"]
+        total = 0
+
+        # Partition by trade_date within the index subdirectory
+        for trade_date, group in df.groupby("trade_date"):
+            filename = f"{short_name}_{trade_date}.parquet"
+            path = self._parquet_dir("index_daily") / short_name / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._upsert_parquet(group, path, pkeys)
+            total += len(group)
+
+        self._ensure_views("index_daily")
+        self.write_manifest()
+        log.info(
+            "index_daily/%s: saved %d rows across %d date(s).",
+            short_name, total, df["trade_date"].nunique(),
+        )
+        return total
+
     # ------------------------------------------------------------------
     # Read / Query helpers
     # ------------------------------------------------------------------
@@ -526,12 +779,131 @@ class DataStorage:
         """Read current ST stock list."""
         return self._read_table("st_stocks", ts_code)
 
+    def read_adjfactor(
+        self,
+        ts_code: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> pd.DataFrame:
+        """Read adjustment factor data."""
+        return self._read_table("adjfactor", ts_code, start_date, end_date)
+
+    def read_moneyflow(
+        self,
+        ts_code: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> pd.DataFrame:
+        """Read moneyflow data."""
+        return self._read_table("moneyflow", ts_code, start_date, end_date)
+
+    def read_index_basic(
+        self,
+        market: str | None = None,
+    ) -> pd.DataFrame:
+        """Read index basic info, optionally filtered by market.
+
+        Args:
+            market: 'CSI', 'SSE', 'SZSE', or None for all.
+
+        Returns:
+            DataFrame with index basic information.
+        """
+        self._ensure_views("index_basic")
+        if market:
+            sql = f"SELECT * FROM index_basic_view WHERE market = '{market}' ORDER BY ts_code"
+        else:
+            sql = "SELECT * FROM index_basic_view ORDER BY ts_code"
+        try:
+            return self.conn.execute(sql).df()
+        except Exception:
+            log.exception("Read failed for index_basic")
+            return pd.DataFrame()
+
+    def read_index_weight(
+        self,
+        index_code: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        con_code: str | None = None,
+    ) -> pd.DataFrame:
+        """Read index constituent weight data.
+
+        Args:
+            index_code: Tushare index code e.g. '000300.SH', or None for all.
+            start_date: Start date 'YYYYMMDD'.
+            end_date: End date 'YYYYMMDD'.
+            con_code: Filter by constituent stock code.
+
+        Returns:
+            DataFrame with index weight data.
+        """
+        self._ensure_views("index_weight")
+
+        conditions: list[str] = []
+        if index_code:
+            conditions.append(f"index_code = '{index_code}'")
+        if start_date:
+            conditions.append(f"trade_date >= '{start_date}'")
+        if end_date:
+            conditions.append(f"trade_date <= '{end_date}'")
+        if con_code:
+            conditions.append(f"con_code = '{con_code}'")
+
+        sql = "SELECT * FROM index_weight_view"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY index_code, trade_date, con_code"
+
+        try:
+            return self.conn.execute(sql).df()
+        except Exception:
+            log.exception("Read failed for index_weight")
+            return pd.DataFrame()
+
+    def read_index_daily(
+        self,
+        index_code: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> pd.DataFrame:
+        """Read index daily OHLCV data.
+
+        Args:
+            index_code: Tushare index code e.g. '000300.SH', or None for all.
+            start_date: Start date 'YYYYMMDD'.
+            end_date: End date 'YYYYMMDD'.
+
+        Returns:
+            DataFrame with index daily data.
+        """
+        self._ensure_views("index_daily")
+
+        conditions: list[str] = []
+        if index_code:
+            conditions.append(f"ts_code = '{index_code}'")
+        if start_date:
+            conditions.append(f"trade_date >= '{start_date}'")
+        if end_date:
+            conditions.append(f"trade_date <= '{end_date}'")
+
+        sql = "SELECT * FROM index_daily_view"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY ts_code, trade_date"
+
+        try:
+            return self.conn.execute(sql).df()
+        except Exception:
+            log.exception("Read failed for index_daily")
+            return pd.DataFrame()
+
     def execute_sql(self, sql: str) -> pd.DataFrame:
         """Execute an arbitrary SQL query against the DuckDB database.
 
         All Parquet-backed tables are available as views named:
         ``daily_view``, ``stock_basic_view``, ``income_view``,
-        ``balancesheet_view``.
+        ``balancesheet_view``, ``adjfactor_view``, ``moneyflow_view``.
         """
         self._ensure_views()
         log.info("Executing SQL: %s", sql[:200])
@@ -574,11 +946,44 @@ class DataStorage:
                 p = _single_file_path(self._settings, dt)
                 info["files"] = 1 if p.exists() else 0
                 info["partition"] = "single"
+            elif dt == "index_weight":
+                d = self._parquet_dir(dt)
+                all_files: list[Path] = []
+                if d.exists():
+                    for sub_dir in d.iterdir():
+                        if sub_dir.is_dir():
+                            all_files.extend(sorted(sub_dir.glob("*.parquet")))
+                info["files"] = len(all_files)
+                info["partition"] = "by_index"
+                if all_files:
+                    info["date_range"] = {
+                        "first": all_files[0].stem,
+                        "last": all_files[-1].stem,
+                    }
+            elif dt == "index_daily":
+                d = self._parquet_dir(dt)
+                all_files: list[Path] = []
+                if d.exists():
+                    for sub_dir in d.iterdir():
+                        if sub_dir.is_dir():
+                            all_files.extend(sorted(sub_dir.glob("*.parquet")))
+                info["files"] = len(all_files)
+                info["partition"] = "by_index"
+                if all_files:
+                    info["date_range"] = {
+                        "first": all_files[0].stem,
+                        "last": all_files[-1].stem,
+                    }
             else:
                 d = self._parquet_dir(dt)
                 files = sorted(d.glob("*.parquet")) if d.exists() else []
                 info["files"] = len(files)
-                info["partition"] = "by_date" if dt in _BY_DATE_TABLES else "by_year"
+                if dt == "index_basic":
+                    info["partition"] = "by_market"
+                elif dt in _BY_DATE_TABLES:
+                    info["partition"] = "by_date"
+                else:
+                    info["partition"] = "by_year"
                 if files:
                     info["date_range"] = {
                         "first": files[0].stem,
@@ -747,7 +1152,12 @@ class DataStorage:
     # ------------------------------------------------------------------
 
     def _ensure_views(self, data_type: str | None = None) -> None:
-        """Create/replace DuckDB views that point to the Parquet globs."""
+        """Create/replace DuckDB views that point to the Parquet globs.
+
+        When no Parquet files exist for a data type an empty view with the
+        correct column schema is still created, so that ``SELECT ... FROM
+        <view>`` never fails with ``CatalogException``.
+        """
         types = [data_type] if data_type else list(_ALL_TABLES)
 
         for dt in types:
@@ -760,6 +1170,39 @@ class DataStorage:
                             f"CREATE OR REPLACE VIEW {view_name} AS "
                             f"SELECT * FROM read_parquet('{path}')"
                         )
+                    else:
+                        self._create_empty_view(dt, view_name)
+                elif dt == "index_basic":
+                    # Use explicit column type casting — all-NULL columns
+                    # would otherwise be inferred as INTEGER by DuckDB.
+                    # Columns are quoted to handle reserved words like "desc".
+                    glob_path = self._parquet_dir(dt) / "*.parquet"
+                    if list(self._parquet_dir(dt).glob("*.parquet")):
+                        col_types = _COLUMN_TYPES.get(dt, {})
+                        if col_types:
+                            casts = []
+                            for col_name, col_type in col_types.items():
+                                casts.append(
+                                    f'CAST("{col_name}" AS {col_type}) AS "{col_name}"'
+                                )
+                            cast_sel = "SELECT " + ", ".join(casts)
+                            self.conn.execute(
+                                f"CREATE OR REPLACE VIEW {view_name} AS "
+                                f"{cast_sel} FROM read_parquet('{glob_path}', "
+                                f"union_by_name=true)"
+                            )
+                        else:
+                            self.conn.execute(
+                                f"CREATE OR REPLACE VIEW {view_name} AS "
+                                f"SELECT * FROM read_parquet('{glob_path}', "
+                                f"union_by_name=true)"
+                            )
+                    else:
+                        self._create_empty_view(dt, view_name)
+                elif dt == "index_weight":
+                    self._ensure_index_weight_views()
+                elif dt == "index_daily":
+                    self._ensure_index_daily_views()
                 else:
                     glob_path = self._parquet_dir(dt) / "*.parquet"
                     if list(self._parquet_dir(dt).glob("*.parquet")):
@@ -768,8 +1211,128 @@ class DataStorage:
                             f"SELECT * FROM read_parquet('{glob_path}', "
                             f"union_by_name=true)"
                         )
+                    else:
+                        self._create_empty_view(dt, view_name)
             except Exception:
                 log.exception("Failed to create view %s", view_name)
+
+    def _create_empty_view(self, data_type: str, view_name: str) -> None:
+        """Create an empty view with the correct column schema.
+
+        The view returns zero rows but has the right column names and types
+        so that queries never fail with ``CatalogException``.
+        """
+        col_types = _COLUMN_TYPES.get(data_type, {})
+        if not col_types:
+            log.debug("No column type info for %s, skipping empty view.", data_type)
+            return
+        col_defs: list[str] = []
+        for col_name, col_type in col_types.items():
+            col_defs.append(f"CAST(NULL AS {col_type}) AS {col_name}")
+        empty_select = "SELECT " + ", ".join(col_defs) + " WHERE FALSE"
+        self.conn.execute(
+            f"CREATE OR REPLACE VIEW {view_name} AS {empty_select}"
+        )
+
+    def _ensure_index_weight_views(self) -> None:
+        """Create per-index and combined views for index_weight data.
+
+        Creates:
+        - ``index_weight_zz1000_view``, ``index_weight_zz2000_view``,
+          ``index_weight_zz500_view``, ``index_weight_hs300_view``
+        - ``index_weight_view`` — union of all per-index views.
+        """
+        col_types = _COLUMN_TYPES.get("index_weight", {})
+        base_dir = self._parquet_dir("index_weight")
+        any_data = False
+        union_parts: list[str] = []
+
+        for short_name in _INDEX_WEIGHT_INDICES.values():
+            view_name = f"index_weight_{short_name}_view"
+            glob_path = base_dir / short_name / "*.parquet"
+            files_exist = bool(list(base_dir.glob(f"{short_name}/*.parquet")))
+
+            if files_exist:
+                any_data = True
+                if col_types:
+                    casts = []
+                    for col_name, col_type in col_types.items():
+                        casts.append(
+                            f'CAST("{col_name}" AS {col_type}) AS "{col_name}"'
+                        )
+                    cast_sel = "SELECT " + ", ".join(casts)
+                    self.conn.execute(
+                        f"CREATE OR REPLACE VIEW {view_name} AS "
+                        f"{cast_sel} FROM read_parquet('{glob_path}', "
+                        f"union_by_name=true)"
+                    )
+                else:
+                    self.conn.execute(
+                        f"CREATE OR REPLACE VIEW {view_name} AS "
+                        f"SELECT * FROM read_parquet('{glob_path}', "
+                        f"union_by_name=true)"
+                    )
+                union_parts.append(f"SELECT * FROM {view_name}")
+            else:
+                self._create_empty_view("index_weight", view_name)
+
+        # Combined view
+        if union_parts:
+            union_sql = " UNION ALL ".join(union_parts)
+            self.conn.execute(
+                f"CREATE OR REPLACE VIEW index_weight_view AS {union_sql}"
+            )
+        else:
+            self._create_empty_view("index_weight", "index_weight_view")
+
+    def _ensure_index_daily_views(self) -> None:
+        """Create per-index and combined views for index_daily data.
+
+        Creates:
+        - ``index_daily_zz1000_view``, ``index_daily_zz2000_view``,
+          ``index_daily_zz500_view``, ``index_daily_hs300_view``
+        - ``index_daily_view`` — union of all per-index views.
+        """
+        col_types = _COLUMN_TYPES.get("index_daily", {})
+        base_dir = self._parquet_dir("index_daily")
+        union_parts: list[str] = []
+
+        for short_name in _INDEX_DAILY_INDICES.values():
+            view_name = f"index_daily_{short_name}_view"
+            glob_path = base_dir / short_name / "*.parquet"
+            files_exist = bool(list(base_dir.glob(f"{short_name}/*.parquet")))
+
+            if files_exist:
+                if col_types:
+                    casts = []
+                    for col_name, col_type in col_types.items():
+                        casts.append(
+                            f'CAST("{col_name}" AS {col_type}) AS "{col_name}"'
+                        )
+                    cast_sel = "SELECT " + ", ".join(casts)
+                    self.conn.execute(
+                        f"CREATE OR REPLACE VIEW {view_name} AS "
+                        f"{cast_sel} FROM read_parquet('{glob_path}', "
+                        f"union_by_name=true)"
+                    )
+                else:
+                    self.conn.execute(
+                        f"CREATE OR REPLACE VIEW {view_name} AS "
+                        f"SELECT * FROM read_parquet('{glob_path}', "
+                        f"union_by_name=true)"
+                    )
+                union_parts.append(f"SELECT * FROM {view_name}")
+            else:
+                self._create_empty_view("index_daily", view_name)
+
+        # Combined view
+        if union_parts:
+            union_sql = " UNION ALL ".join(union_parts)
+            self.conn.execute(
+                f"CREATE OR REPLACE VIEW index_daily_view AS {union_sql}"
+            )
+        else:
+            self._create_empty_view("index_daily", "index_daily_view")
 
     # ------------------------------------------------------------------
     # Internal: read
@@ -796,7 +1359,7 @@ class DataStorage:
         view = f"{data_type}_view"
 
         date_col = (
-            "trade_date" if data_type == "daily"
+            "trade_date" if data_type in ("daily", "adjfactor", "moneyflow")
             else ("end_date" if data_type in ("income", "cashflow", "balancesheet")
             else ("cal_date" if data_type == "trade_calendar" else None))
         )
@@ -839,7 +1402,7 @@ class DataStorage:
 def _infer_data_type_from_path(path: Path) -> str:
     """Heuristic to determine data_type from a Parquet path."""
     parent = path.parent.name
-    if parent in ("daily", "income", "balancesheet", "trade_calendar"):
+    if parent in ("daily", "income", "balancesheet", "trade_calendar", "adjfactor", "moneyflow"):
         return parent
     name = path.stem
     if name in ("stock_basic", "st_stocks"):
